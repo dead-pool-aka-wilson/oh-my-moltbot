@@ -36,10 +36,35 @@ export {
 // Seed Harvester
 export { harvester, saveSeed } from './hooks/seed-harvester';
 
+// Security Bridge (Zone 1 Executor)
+export {
+  securityBridge,
+  ping as securityPing,
+  listActions as securityListActions,
+  performAction,
+  killSwitch,
+  executeTool,
+  getToolDefinitions,
+  allTools,
+} from './security';
+
 // Moltbot Plugin
 export { plugin as moltbotPlugin } from './moltbot-plugin';
 
-import { existsSync, readFileSync } from 'fs';
+// Autonomous Task System
+export {
+  autonomousTaskSystem,
+  taskQueue,
+  scheduler,
+  executor,
+  rateLimitMonitor,
+  TaskQueue,
+  Scheduler,
+  TaskExecutor,
+  RateLimitMonitor,
+} from './autonomous';
+
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import { OhMyMoltbotConfig, defaultConfig } from './config/schema';
 import { ModelOrchestrator } from './orchestrator';
@@ -57,12 +82,12 @@ export function loadConfig(workspaceDir?: string): OhMyMoltbotConfig {
   ].filter(Boolean) as string[];
 
   for (const configPath of searchPaths) {
-    if (existsSync(configPath)) {
-      try {
-        const content = readFileSync(configPath, 'utf-8');
-        const userConfig = JSON.parse(content);
-        return mergeConfig(defaultConfig, userConfig);
-      } catch (e) {
+    try {
+      const content = readFileSync(configPath, 'utf-8');
+      const userConfig = JSON.parse(content);
+      return mergeConfig(defaultConfig, userConfig);
+    } catch (e: any) {
+      if (e.code !== 'ENOENT') {
         console.error(`Failed to parse config at ${configPath}:`, e);
       }
     }
@@ -80,7 +105,14 @@ function mergeConfig(defaults: OhMyMoltbotConfig, user: Partial<OhMyMoltbotConfi
     ...user,
     agents: { ...defaults.agents, ...user.agents },
     categories: { ...defaults.categories, ...user.categories },
-    review: { ...defaults.review, ...user.review },
+    review: {
+      enabled: user.review?.enabled ?? defaults.review?.enabled ?? false,
+      model: user.review?.model ?? defaults.review?.model ?? 'claude-sonnet',
+      blockOnCritical: user.review?.blockOnCritical ?? defaults.review?.blockOnCritical,
+      reviewThreshold: user.review?.reviewThreshold ?? defaults.review?.reviewThreshold,
+      extensions: user.review?.extensions ?? defaults.review?.extensions,
+      ignorePatterns: user.review?.ignorePatterns ?? defaults.review?.ignorePatterns,
+    },
     hooks: { ...defaults.hooks, ...user.hooks },
   };
 }

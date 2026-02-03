@@ -49,7 +49,7 @@ export class ProxyOrchestrator {
     
     console.log(`\n🎭 Proxy Session Started: ${session.id}`);
     console.log(`   Routed to: ${routing.model}`);
-    console.log(`   Reasoning: ${routing.reasoning}`);
+    console.log(`   Reasoning: ${routing.routing.reasoning}`);
     
     // 3. Build proxy prompt
     const proxyPrompt = this.interviewer.buildProxyPrompt(session);

@@ -166,14 +166,13 @@ export async function ultraworkWithGateway(
     const waveStart = Date.now();
     console.log(`\n⚡ Starting Wave ${wave.wave}`);
     
-    // Route each task through gateway to find best model
     const routedTasks = await Promise.all(
       wave.tasks.map(async task => {
-        const routing = await gateway.process(task.prompt);
-        console.log(`  📍 Task "${task.id}" → ${routing.model} (${routing.reasoning})`);
+        const result = await gateway.process(task.prompt);
+        console.log(`  📍 Task "${task.id}" → ${result.model} (${result.routing.category})`);
         return {
           ...task,
-          resolvedModel: routing.model,
+          resolvedModel: result.model,
         };
       })
     );

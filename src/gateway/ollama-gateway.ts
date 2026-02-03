@@ -1,27 +1,37 @@
 /**
- * Ollama Prompt Gateway
+ * Ollama Gateway - Local-First Analysis Architecture
  * 
- * Flow:
- * 1. User message → Ollama
- * 2. Check model availability in priority order:
- *    - Claude Opus (best reasoning)
- *    - Claude Sonnet (good balance)
- *    - GPT-5 (fast coding)
- *    - Kimi (review/Chinese)
- * 3. Route to first available model
- * 4. If ALL unavailable → Ollama responds itself (worst case)
+ * NEW FLOW:
+ * 1. Local Ollama ANALYZES the prompt (classify task, decide model needs)
+ * 2. Based on analysis, ROUTE to appropriate paid model
+ * 3. If rate-limited, try fallbacks within same capability tier
+ * 4. Local Ollama executes as last resort
+ * 
+ * This prevents wasting paid API calls on availability checks.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { Mutex } from 'async-mutex';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface GatewayConfig {
   ollamaUrl: string;
-  ollamaModel: string;
-  fallbackChain: BackendModel[];
-  rateLimitWindow: number;  // ms
+  routerModel: string;
+  executorModel: string;
+  modelPool: ModelPool;
+  rateLimitWindow: number;
+}
+
+export interface ModelPool {
+  planning: BackendModel[];
+  reasoning: BackendModel[];
+  coding: BackendModel[];
+  review: BackendModel[];
+  quick: BackendModel[];
+  vision: BackendModel[];
+  image_gen: BackendModel[];
 }
 
 export interface BackendModel {
@@ -30,142 +40,249 @@ export interface BackendModel {
   maxRequestsPerMinute: number;
 }
 
+export interface RoutingDecision {
+  category: keyof ModelPool | 'local';
+  reasoning: string;
+  complexity: 'simple' | 'moderate' | 'complex';
+  suggestedModel?: string;
+}
+
 export interface GatewayResponse {
   model: string;
   response: string;
-  reasoning: string;
+  routing: RoutingDecision;
   fallbackUsed: boolean;
-  checkedModels: string[];
+  attemptedModels: string[];
 }
 
-// Rate limit tracking
 interface RateLimitRecord {
   count: number;
   windowStart: number;
 }
 
+const ROUTER_PROMPT = `You are the Gateway Router. Your ONLY job is to classify and route - NEVER answer the user's question.
+
+OUTPUT FORMAT (JSON only, no markdown, no explanation):
+{"category": "planning|reasoning|coding|review|quick|vision|image_gen|local", "reasoning": "brief note for orchestrator", "complexity": "simple|moderate|complex"}
+
+ROUTING RULES (check in order):
+1. Generate/create/draw an image? → "image_gen"
+2. Analyze images/screenshots/visual content? → "vision"
+3. Write/modify/debug/implement code? → "coding"
+4. Review/analyze/audit existing code? → "review"
+5. Requires planning/architecture/design/strategy? → "planning"
+6. Complex logical thinking/analysis/problem-solving? → "reasoning"
+7. Simple factual question or conversation? → "quick"
+8. Just "hi"/"hello"/trivial greeting? → "local"
+
+MODEL ROLES (for your reference):
+- planning: Opus - architecture, strategy, task planning before implementation
+- reasoning: Opus - complex logical thinking, analysis, problem-solving
+- coding: Opus/GPT-5/Kimi - implementation (Opus preferred, needs plan first)
+- review: Kimi reviews GPT-5 code, GPT-5 reviews Kimi code (cross-review)
+- quick: Sonnet - fast, general responses
+- vision: Gemini - image analysis
+- image_gen: Gemini - image generation
+
+COMPLEXITY:
+- simple: single-step, unambiguous
+- moderate: multi-step but straightforward  
+- complex: requires planning, trade-offs, multiple approaches
+
+CRITICAL RULES:
+- NEVER answer the question - only output routing JSON
+- NEVER default to "local" - it's for trivial greetings ONLY
+- ALL coding tasks (any complexity) need a plan → route to "planning" first
+- After plan is made, route to "coding" for implementation
+- When uncertain, route to "planning" (Opus handles ambiguity best)
+- Your output goes to the orchestrator, NOT the user
+
+User request: `;
+
 const DEFAULT_CONFIG: GatewayConfig = {
   ollamaUrl: 'http://localhost:11434',
-  ollamaModel: 'qwen2.5:14b',
-  rateLimitWindow: 60000,  // 1 minute
-  fallbackChain: [
-    { name: 'Claude Opus', model: 'anthropic/claude-opus-4-5', maxRequestsPerMinute: 50 },
-    { name: 'Claude Sonnet', model: 'anthropic/claude-sonnet-4-5', maxRequestsPerMinute: 60 },
-    { name: 'GPT-5', model: 'github-copilot/gpt-5.2-codex', maxRequestsPerMinute: 60 },
-    { name: 'Kimi', model: 'opencode/kimi-k2.5-free', maxRequestsPerMinute: 100 },
-  ],
+  routerModel: 'qwen2.5:7b',
+  executorModel: 'qwen2.5:14b',
+  rateLimitWindow: 60000,
+  modelPool: {
+    planning: [
+      { name: 'Claude Opus', model: 'anthropic/claude-opus-4-5', maxRequestsPerMinute: 50 },
+      { name: 'Gemini Pro', model: 'google/gemini-2.5-pro', maxRequestsPerMinute: 60 },
+    ],
+    reasoning: [
+      { name: 'Claude Opus', model: 'anthropic/claude-opus-4-5', maxRequestsPerMinute: 50 },
+      { name: 'Gemini Pro', model: 'google/gemini-2.5-pro', maxRequestsPerMinute: 60 },
+    ],
+    coding: [
+      { name: 'Claude Opus', model: 'anthropic/claude-opus-4-5', maxRequestsPerMinute: 50 },
+      { name: 'GPT-5 Codex', model: 'github-copilot/gpt-5.2-codex', maxRequestsPerMinute: 60 },
+      { name: 'Kimi Coder', model: 'moonshotai/kimi-k2.5-coder', maxRequestsPerMinute: 100 },
+    ],
+    review: [
+      { name: 'Kimi', model: 'moonshotai/kimi-k2.5-coder', maxRequestsPerMinute: 100 },
+      { name: 'GPT-5 Codex', model: 'github-copilot/gpt-5.2-codex', maxRequestsPerMinute: 60 },
+    ],
+    quick: [
+      { name: 'Claude Sonnet', model: 'anthropic/claude-sonnet-4-5', maxRequestsPerMinute: 60 },
+      { name: 'Gemini Flash', model: 'google/gemini-2.5-flash', maxRequestsPerMinute: 200 },
+    ],
+    vision: [
+      { name: 'Gemini Vision', model: 'google/gemini-2.5-flash', maxRequestsPerMinute: 100 },
+      { name: 'Claude Vision', model: 'anthropic/claude-sonnet-4-5', maxRequestsPerMinute: 60 },
+    ],
+    image_gen: [
+      { name: 'Gemini Image', model: 'google/gemini-2.5-pro-image', maxRequestsPerMinute: 50 },
+    ],
+  },
 };
 
 export class OllamaGateway {
   private config: GatewayConfig;
   private rateLimits: Map<string, RateLimitRecord> = new Map();
+  private rateLimitMutex: Mutex = new Mutex();
 
   constructor(config?: Partial<GatewayConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
   /**
-   * Main entry: Process a prompt through the gateway
+   * PHASE 1: Local Ollama analyzes and routes
+   */
+  async analyze(prompt: string): Promise<RoutingDecision> {
+    try {
+      const response = await fetch(`${this.config.ollamaUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.config.routerModel,
+          prompt: ROUTER_PROMPT + prompt.slice(0, 1000),
+          stream: false,
+          options: { temperature: 0.1 },
+        }),
+      });
+
+      const data = await response.json();
+      const text = data.response || '';
+      
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const decision = JSON.parse(jsonMatch[0]) as RoutingDecision;
+        if (this.isValidCategory(decision.category)) {
+          return decision;
+        }
+      }
+    } catch (e) {
+      console.error('Router analysis failed:', e);
+    }
+
+    return {
+      category: 'quick',
+      reasoning: 'Router failed, defaulting to quick',
+      complexity: 'moderate',
+    };
+  }
+
+  private isValidCategory(cat: string): cat is keyof ModelPool | 'local' {
+    return ['planning', 'reasoning', 'coding', 'review', 'quick', 'vision', 'image_gen', 'local'].includes(cat);
+  }
+
+  /**
+   * PHASE 2: Route to appropriate model based on analysis
    */
   async process(prompt: string, files?: string[]): Promise<GatewayResponse> {
-    const checkedModels: string[] = [];
+    const routing = await this.analyze(prompt);
+    const attemptedModels: string[] = [];
+
+    console.log(`🧭 Router decision: ${routing.category} (${routing.complexity})`);
+
+    if (routing.category === 'local') {
+      const response = await this.executeLocal(prompt);
+      return {
+        model: `ollama/${this.config.executorModel}`,
+        response,
+        routing,
+        fallbackUsed: false,
+        attemptedModels: ['Ollama (local)'],
+      };
+    }
+
+    const pool = this.config.modelPool[routing.category];
     
-    // Check each model in priority order
-    for (const backend of this.config.fallbackChain) {
-      checkedModels.push(backend.name);
+    for (const backend of pool) {
+      attemptedModels.push(backend.name);
       
-      if (this.isAvailable(backend)) {
-        // Model is available, route to it
-        this.recordRequest(backend.name);
+      const acquired = await this.tryAcquireSlot(backend);
+      if (!acquired) {
+        console.log(`  ⏳ ${backend.name} rate-limited, trying next...`);
+        continue;
+      }
+      
+      try {
+        console.log(`  🎯 Routing to ${backend.name}`);
+        const response = await this.executeModel(backend.model, prompt, files);
         
-        try {
-          const response = await this.callModel(backend.model, prompt, files);
-          return {
-            model: backend.model,
-            response,
-            reasoning: `Routed to ${backend.name} (first available in chain)`,
-            fallbackUsed: checkedModels.length > 1,
-            checkedModels,
-          };
-        } catch (error) {
-          // Model call failed, continue to next
-          console.error(`${backend.name} failed:`, error);
-          continue;
+        return {
+          model: backend.model,
+          response,
+          routing,
+          fallbackUsed: attemptedModels.length > 1,
+          attemptedModels,
+        };
+      } catch (error: any) {
+        console.error(`  ❌ ${backend.name} failed:`, error.message);
+        
+        if (error.message?.includes('rate') || error.message?.includes('429')) {
+          this.markRateLimited(backend.name);
         }
+        continue;
       }
     }
 
-    // ALL models unavailable - Ollama responds itself
-    console.log('All external models unavailable, using Ollama fallback');
-    const ollamaResponse = await this.callOllama(prompt);
+    console.log('  🏠 All paid models exhausted, using local Ollama');
+    attemptedModels.push('Ollama (local)');
+    
+    const response = await this.executeLocal(prompt);
     
     return {
-      model: `ollama/${this.config.ollamaModel}`,
-      response: ollamaResponse,
-      reasoning: `⚠️ All external models rate-limited. Ollama (${this.config.ollamaModel}) responded directly. Checked: ${checkedModels.join(' → ')}`,
+      model: `ollama/${this.config.executorModel}`,
+      response,
+      routing,
       fallbackUsed: true,
-      checkedModels: [...checkedModels, 'Ollama (local)'],
+      attemptedModels,
     };
   }
 
   /**
-   * Check if a model is available (not rate limited)
+   * Execute on external model via opencode CLI
    */
-  private isAvailable(backend: BackendModel): boolean {
-    const now = Date.now();
-    const record = this.rateLimits.get(backend.name);
-
-    if (!record) return true;
-
-    // Reset if window expired
-    if (now - record.windowStart > this.config.rateLimitWindow) {
-      this.rateLimits.delete(backend.name);
-      return true;
-    }
-
-    return record.count < backend.maxRequestsPerMinute;
-  }
-
-  /**
-   * Record a request for rate limiting
-   */
-  private recordRequest(modelName: string): void {
-    const now = Date.now();
-    const record = this.rateLimits.get(modelName);
-
-    if (!record || now - record.windowStart > this.config.rateLimitWindow) {
-      this.rateLimits.set(modelName, { count: 1, windowStart: now });
-    } else {
-      record.count++;
-    }
-  }
-
-  /**
-   * Call external model via opencode
-   */
-  private async callModel(model: string, prompt: string, files?: string[]): Promise<string> {
-    const fileArgs = files?.map(f => `-f "${f}"`).join(' ') || '';
-    const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  private async executeModel(model: string, prompt: string, files?: string[]): Promise<string> {
+    const args = ['run', '-m', model];
     
-    const cmd = `opencode run -m "${model}" ${fileArgs} "${escapedPrompt}"`;
+    if (files?.length) {
+      for (const f of files) {
+        args.push('-f', f);
+      }
+    }
     
-    const { stdout } = await execAsync(cmd, { 
-      timeout: 120000,  // 2 min timeout
-      maxBuffer: 10 * 1024 * 1024,  // 10MB
+    args.push(prompt);
+
+    const { stdout } = await execFileAsync('opencode', args, {
+      timeout: 120000,
+      maxBuffer: 10 * 1024 * 1024,
     });
     
     return stdout;
   }
 
   /**
-   * Call local Ollama model directly
+   * Execute on local Ollama
    */
-  private async callOllama(prompt: string): Promise<string> {
+  private async executeLocal(prompt: string): Promise<string> {
     const response = await fetch(`${this.config.ollamaUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: this.config.ollamaModel,
+        model: this.config.executorModel,
         prompt,
         stream: false,
       }),
@@ -176,40 +293,57 @@ export class OllamaGateway {
   }
 
   /**
-   * Get current rate limit status for all models
+   * Check availability without modifying state (for status queries)
    */
-  getStatus(): Record<string, { available: boolean; used: number; limit: number; resetsIn: number }> {
+  private isAvailableReadOnly(backend: BackendModel): boolean {
     const now = Date.now();
-    const status: Record<string, any> = {};
+    const record = this.rateLimits.get(backend.name);
 
-    for (const backend of this.config.fallbackChain) {
-      const record = this.rateLimits.get(backend.name);
-      const used = record?.count ?? 0;
-      const resetsIn = record ? Math.max(0, this.config.rateLimitWindow - (now - record.windowStart)) : 0;
-      
-      status[backend.name] = {
-        available: this.isAvailable(backend),
-        used,
-        limit: backend.maxRequestsPerMinute,
-        resetsIn: Math.round(resetsIn / 1000),
-      };
+    if (!record) return true;
+
+    if (now - record.windowStart > this.config.rateLimitWindow) {
+      return true;
     }
 
-    status['Ollama (local)'] = {
-      available: true,
-      used: 0,
-      limit: Infinity,
-      resetsIn: 0,
-    };
-
-    return status;
+    return record.count < backend.maxRequestsPerMinute;
   }
 
   /**
-   * Manually mark a model as rate limited (e.g., from API error)
+   * Atomically check availability and record request if available.
+   * Returns true if request was recorded, false if rate limited.
+   * Uses mutex to prevent TOCTOU race conditions.
    */
+  private async tryAcquireSlot(backend: BackendModel): Promise<boolean> {
+    return this.rateLimitMutex.runExclusive(() => {
+      const now = Date.now();
+      const record = this.rateLimits.get(backend.name);
+
+      // No record = available, create new window
+      if (!record) {
+        this.rateLimits.set(backend.name, { count: 1, windowStart: now });
+        return true;
+      }
+
+      // Window expired = reset and allow
+      if (now - record.windowStart > this.config.rateLimitWindow) {
+        this.rateLimits.set(backend.name, { count: 1, windowStart: now });
+        return true;
+      }
+
+      // Within window and under limit = allow
+      if (record.count < backend.maxRequestsPerMinute) {
+        record.count++;
+        return true;
+      }
+
+      // Rate limited
+      return false;
+    });
+  }
+
   markRateLimited(modelName: string, count?: number): void {
-    const backend = this.config.fallbackChain.find(b => b.name === modelName);
+    const allModels = Object.values(this.config.modelPool).flat();
+    const backend = allModels.find(b => b.name === modelName);
     if (backend) {
       this.rateLimits.set(modelName, {
         count: count ?? backend.maxRequestsPerMinute,
@@ -218,25 +352,73 @@ export class OllamaGateway {
     }
   }
 
-  /**
-   * Test Ollama connectivity
-   */
-  async testOllama(): Promise<boolean> {
+  getStatus(): Record<string, { available: boolean; used: number; limit: number; resetsIn: number; category: string }> {
+    const now = Date.now();
+    const status: Record<string, any> = {};
+
+    for (const [category, models] of Object.entries(this.config.modelPool)) {
+      for (const backend of models) {
+        if (status[backend.name]) continue;
+        
+        const record = this.rateLimits.get(backend.name);
+        const used = record?.count ?? 0;
+        const resetsIn = record ? Math.max(0, this.config.rateLimitWindow - (now - record.windowStart)) : 0;
+        
+        status[backend.name] = {
+          available: this.isAvailableReadOnly(backend),
+          used,
+          limit: backend.maxRequestsPerMinute,
+          resetsIn: Math.round(resetsIn / 1000),
+          category,
+        };
+      }
+    }
+
+    status['Ollama Router'] = {
+      available: true,
+      used: 0,
+      limit: Infinity,
+      resetsIn: 0,
+      category: 'router',
+    };
+
+    status['Ollama Executor'] = {
+      available: true,
+      used: 0,
+      limit: Infinity,
+      resetsIn: 0,
+      category: 'fallback',
+    };
+
+    return status;
+  }
+
+  async testOllama(): Promise<{ router: boolean; executor: boolean }> {
     try {
       const response = await fetch(`${this.config.ollamaUrl}/api/tags`);
-      return response.ok;
+      if (!response.ok) return { router: false, executor: false };
+      
+      const data = await response.json();
+      const models = data.models?.map((m: any) => m.name) || [];
+      
+      return {
+        router: models.some((m: string) => m.includes(this.config.routerModel.split(':')[0])),
+        executor: models.some((m: string) => m.includes(this.config.executorModel.split(':')[0])),
+      };
     } catch {
-      return false;
+      return { router: false, executor: false };
     }
   }
 }
 
-// Singleton instance
 export const gateway = new OllamaGateway();
 
-// CLI helper
 export async function route(prompt: string, files?: string[]): Promise<GatewayResponse> {
   return gateway.process(prompt, files);
+}
+
+export async function analyze(prompt: string): Promise<RoutingDecision> {
+  return gateway.analyze(prompt);
 }
 
 export function status(): Record<string, any> {
