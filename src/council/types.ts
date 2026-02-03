@@ -367,6 +367,36 @@ export interface SuccessionEvent {
 }
 
 // ============================================================================
+// Vector Store Interfaces
+// ============================================================================
+
+/**
+ * Result from vector store similarity query
+ */
+export interface SimilarityResult {
+  /** ID of the memory */
+  memoryId: string;
+  /** Similarity score (0-1) */
+  similarity: number;
+}
+
+/**
+ * Vector store for semantic memory retrieval
+ */
+export interface VectorStore {
+  /** Initialize the vector store */
+  initialize(): Promise<void>;
+  /** Add a memory to the vector store */
+  addMemory(memoryId: string, agentId: string, content: string): Promise<string>;
+  /** Query for similar memories */
+  querySimilar(agentId: string, query: string, limit: number): Promise<SimilarityResult[]>;
+  /** Delete a memory from the vector store */
+  deleteMemory(embeddingId: string): Promise<void>;
+  /** Clear all memories from the vector store */
+  clear(): Promise<void>;
+}
+
+// ============================================================================
 // Type Guards
 // ============================================================================
 
