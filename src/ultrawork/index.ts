@@ -11,7 +11,7 @@
  * 5. Final aggregation
  */
 
-export { ParallelSessionManager, type Session, type SessionStatus } from './session-manager';
-export { TaskPlanner, type TaskPlan, type TaskWave, type Task } from './planner';
+export { ParallelSessionManager, sessionManager, type Session, type SessionStatus } from './session-manager';
+export { TaskPlanner, planner, type TaskPlan, type TaskWave, type Task } from './planner';
 export { getUltraworkPrompt } from './prompts';
 export { ultrawork, spawnParallel, collectResults } from './executor';

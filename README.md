@@ -1,153 +1,197 @@
-# oh-my-moltbot 🤖
+# oh-my-moltbot
 
-**Multi-Model Orchestration Plugin for Moltbot**
+Multi-Model Orchestration Plugin for Moltbot
 
-Batteries-included plugin that provides intelligent model routing, auto-review, and agent management for Moltbot.
-
-## Features
-
-- 🎯 **Intelligent Model Routing** - Automatically selects the best model based on task type
-- 🤖 **Named Agents** - Define specialized agents with custom models and prompts
-- 📝 **Category-based Routing** - Route tasks by keywords, file types, or explicit hints
-- 🔍 **Auto-Review** - Automatic code review with Kimi on edits
-- 🔄 **Fallback Chains** - Graceful degradation if primary model is unavailable
-- 🪝 **Hook System** - Lifecycle hooks for custom integrations
+**Features:**
+- 🌐 **Ollama Gateway** - Route prompts through cascading fallback (Opus → Sonnet → GPT-5 → Kimi → Ollama)
+- 🎭 **Proxy Mode** - Model acts as your thought partner, explores concepts WITH you
+- 🚀 **Ultrawork Mode** - Parallel session execution with dependency management
+- 🌱 **Seed Harvesting** - Auto-extract blog-worthy content from conversations
 
 ## Installation
 
+### As Moltbot Plugin
+
 ```bash
-bun add oh-my-moltbot
-# or
+# Install the plugin
 npm install oh-my-moltbot
+
+# Or add to your Moltbot config
 ```
 
-## Quick Start
-
-```bash
-# Initialize config in your project
-oh-my-moltbot init
-
-# Select model for a task
-oh-my-moltbot select "implement a REST API for user authentication"
-# → Model: github-copilot/gpt-5.2-codex (Trigger match: coding)
-
-oh-my-moltbot select "review this code for security issues" -f src/auth.ts
-# → Model: opencode/kimi-k2.5-free (Trigger match: review)
-
-oh-my-moltbot select "翻译这段文字到中文"
-# → Model: opencode/kimi-k2.5-free (Trigger match: chinese)
-```
-
-## Configuration
-
-Create `oh-my-moltbot.json` in your project root:
-
+Add to your Moltbot configuration:
 ```json
 {
-  "defaultModel": "anthropic/claude-sonnet-4-5",
-  
-  "agents": {
-    "orchestrator": {
-      "model": "anthropic/claude-opus-4-5",
-      "variant": "high",
-      "description": "Complex planning and reasoning"
-    },
-    "coder": {
-      "model": "github-copilot/gpt-5.2-codex",
-      "description": "Fast coding"
-    },
-    "reviewer": {
-      "model": "opencode/kimi-k2.5-free",
-      "description": "Code review"
-    }
-  },
-  
-  "categories": {
-    "coding": {
-      "model": "github-copilot/gpt-5.2-codex",
-      "triggers": ["implement", "code", "write function"],
-      "filePatterns": ["*.ts", "*.js", "*.py"]
-    },
-    "planning": {
-      "model": "anthropic/claude-opus-4-5",
-      "variant": "high",
-      "triggers": ["plan", "design", "architect"]
-    },
-    "chinese": {
-      "model": "opencode/kimi-k2.5-free",
-      "triggers": ["翻译", "中文", "chinese"]
-    },
-    "vision": {
-      "model": "google/gemini-2.5-flash-image",
-      "triggers": ["image", "screenshot", "visual"]
-    }
-  },
-  
-  "review": {
-    "enabled": true,
-    "model": "opencode/kimi-k2.5-free",
-    "blockOnCritical": true,
-    "extensions": [".ts", ".js", ".py"]
-  },
-  
-  "fallbackChain": [
-    "anthropic/claude-sonnet-4-5",
-    "google/gemini-2.5-pro"
-  ]
+  "plugins": ["oh-my-moltbot"]
 }
 ```
+
+### Standalone CLI
+
+```bash
+# Clone and use directly
+git clone https://github.com/dead-pool-aka-wilson/oh-my-moltbot
+cd oh-my-moltbot
+bun install
+
+# Run CLI
+bun bin/oh-my-moltbot.js --help
+```
+
+## Usage
+
+### Commands (in Moltbot)
+
+```
+/ultrawork     - Toggle Ultrawork parallel execution mode
+/proxy <task>  - Start a proxy session (model becomes your thought partner)
+/gateway       - Show gateway status and rate limits  
+/dispatch      - Dispatch tasks from current proxy session
+```
+
+### CLI
+
+```bash
+# Check gateway status
+oh-my-moltbot gateway
+
+# Route a prompt
+oh-my-moltbot route "implement a REST API"
+
+# Select model for task
+oh-my-moltbot select "review this code"
+
+# Spawn background session
+oh-my-moltbot spawn "explore auth patterns" -c explore
+```
+
+## Architecture
+
+### Ollama Gateway Flow
+
+```
+You → Ollama Gateway → Check Claude Opus (rate limited?)
+                         ↓ YES
+                       Check Claude Sonnet
+                         ↓ YES
+                       Check GPT-5
+                         ↓ YES
+                       Check Kimi
+                         ↓ YES (ALL unavailable!)
+                       Ollama responds itself (qwen2.5:14b)
+```
+
+### Proxy Mode Flow
+
+```
+You: "Build a REST API"
+        ↓
+    Gateway → Routes to best model
+        ↓
+    Model (as YOUR proxy):
+        "Let me understand..."
+        "Have you considered...?"
+        "What about...?"
+        ↓
+    [Conversation until understanding is clear]
+        ↓
+    REFINED_PROMPT blocks generated
+        ↓
+    /dispatch → Tasks go to executing agents
+```
+
+### Ultrawork Mode
+
+```
+Wave 1 (No dependencies - parallel):
+├── Task A: Setup infrastructure
+└── Task B: Research patterns
+
+Wave 2 (After Wave 1 - parallel):
+├── Task C: Core impl [depends: A]
+├── Task D: Tests [depends: A]      ← Run together!
+└── Task E: API [depends: B]
+
+Wave 3 (Final):
+└── Task F: Integration [depends: C, D, E]
+```
+
+## Category → Model Routing
+
+| Category | Routes To |
+|----------|-----------|
+| `coding` | GPT-5 Codex |
+| `ultrabrain` | Claude Opus |
+| `planning` | Claude Opus |
+| `review` | Kimi |
+| `chinese` | Kimi |
+| `quick` | Gemini Flash |
+| `explore` | Gemini Flash |
+| `vision` | Gemini Vision |
+| `artistry` | Claude Sonnet |
 
 ## Programmatic Usage
 
 ```typescript
-import { createOrchestrator, selectModelForTask } from 'oh-my-moltbot';
+import { gateway, proxy, ultrawork, saveSeed } from 'oh-my-moltbot';
 
-// Quick selection
-const result = selectModelForTask("implement a login function", {
-  files: ["src/auth.ts"],
-});
-console.log(result.model);  // github-copilot/gpt-5.2-codex
+// Route through gateway
+const routing = await gateway.process("complex task");
+console.log(routing.model);  // → selected model
 
-// With orchestrator instance
-const orchestrator = createOrchestrator();
-const selection = orchestrator.selectModel({
-  message: "review this PR",
-  files: ["src/index.ts", "src/utils.ts"],
-});
-console.log(selection);
-// { model: 'opencode/kimi-k2.5-free', reason: 'Trigger match: review', category: 'review' }
+// Start proxy session
+const { sessionId, proxyResponse } = await proxy.start("Build an API");
+// ... conversation ...
+const { plan } = await proxy.dispatch(sessionId);
 
-// Check if review should be triggered
-if (orchestrator.shouldReview(["src/auth.ts"])) {
-  // Trigger Kimi review
+// Parallel execution
+const result = await ultrawork([
+  { id: 't1', title: 'Setup', prompt: '...', category: 'coding' },
+  { id: 't2', title: 'Core', prompt: '...', dependsOn: ['t1'] },
+  { id: 't3', title: 'Tests', prompt: '...', dependsOn: ['t1'] },
+]);
+
+// Save blog seed
+saveSeed('API Design Lesson', 'Always version your APIs from day 1', 'lesson', ['api', 'design']);
+```
+
+## Configuration
+
+Create `oh-my-moltbot.json` in your workspace:
+
+```json
+{
+  "gateway": {
+    "ollamaUrl": "http://localhost:11434",
+    "ollamaModel": "qwen2.5:14b",
+    "fallbackChain": [
+      { "name": "Claude Opus", "model": "anthropic/claude-opus-4-5", "maxRequestsPerMinute": 50 },
+      { "name": "Claude Sonnet", "model": "anthropic/claude-sonnet-4-5", "maxRequestsPerMinute": 60 },
+      { "name": "GPT-5", "model": "github-copilot/gpt-5.2-codex", "maxRequestsPerMinute": 60 },
+      { "name": "Kimi", "model": "opencode/kimi-k2.5-free", "maxRequestsPerMinute": 100 }
+    ]
+  },
+  "ultrawork": {
+    "maxConcurrent": 10
+  },
+  "seeds": {
+    "directory": "~/Dev/personal-blog/content/.seeds"
+  }
 }
 ```
 
-## CLI Commands
+## Requirements
+
+- **Ollama** running locally with `qwen2.5:14b` model
+- **Moltbot** (for plugin mode)
+- **Bun** runtime
 
 ```bash
-oh-my-moltbot init              # Create default config
-oh-my-moltbot config            # Show current config
-oh-my-moltbot agents            # List configured agents
-oh-my-moltbot categories        # List categories
-oh-my-moltbot select <message>  # Select model for task
-  -a, --agent <name>            # Hint: use specific agent
-  -c, --category <name>         # Hint: use specific category
-  -f, --file <path>             # Add file context
-  --json                        # Output as JSON
+# Install Ollama
+brew install ollama
+brew services start ollama
+ollama pull qwen2.5:14b
 ```
-
-## Model Recommendations
-
-| Task Type | Recommended Model | Why |
-|-----------|------------------|-----|
-| Coding | GPT-5.2 Codex | Fast, optimized for code |
-| Code Review | Kimi | Good at finding issues |
-| Planning | Claude Opus | Strong reasoning |
-| Quick Tasks | Gemini Flash | Fast & cheap |
-| Vision | Gemini Flash Image | Multimodal support |
-| Chinese | Kimi | Native support |
-| Long Context | Gemini Pro | 1M+ token window |
 
 ## License
 

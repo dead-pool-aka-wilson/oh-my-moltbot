@@ -17,6 +17,28 @@ export type { TaskContext, ModelSelection } from './orchestrator';
 export { defaultConfig } from './config/schema';
 export { ModelOrchestrator } from './orchestrator';
 
+// Gateway
+export { gateway, OllamaGateway } from './gateway/ollama-gateway';
+
+// Proxy/Interviewer
+export { proxy, interviewer, PROXY_SYSTEM_PROMPT } from './proxy';
+
+// Ultrawork
+export { 
+  sessionManager, 
+  planner, 
+  ultrawork, 
+  spawnParallel, 
+  collectResults,
+  getUltraworkPrompt,
+} from './ultrawork';
+
+// Seed Harvester
+export { harvester, saveSeed } from './hooks/seed-harvester';
+
+// Moltbot Plugin
+export { plugin as moltbotPlugin } from './moltbot-plugin';
+
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { OhMyMoltbotConfig, defaultConfig } from './config/schema';
@@ -92,11 +114,5 @@ export function selectModelForTask(
   });
 }
 
-// Default export
-export default {
-  loadConfig,
-  createOrchestrator,
-  selectModelForTask,
-  ModelOrchestrator,
-  defaultConfig,
-};
+// Re-export plugin as default for Moltbot
+export { plugin as default } from './moltbot-plugin';
