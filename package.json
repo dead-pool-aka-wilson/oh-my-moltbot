@@ -1,0 +1,23 @@
+{
+  "name": "oh-my-moltbot",
+  "version": "0.1.0",
+  "description": "Multi-Model Orchestration Plugin for Moltbot - Batteries-Included with Agent Routing, Auto-Review, and Smart Delegation",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "oh-my-moltbot": "./bin/oh-my-moltbot.js"
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test"
+  },
+  "keywords": ["moltbot", "plugin", "multi-model", "orchestration", "agents", "ai", "llm"],
+  "author": "Koed",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/bun": "latest"
+  }
+}
