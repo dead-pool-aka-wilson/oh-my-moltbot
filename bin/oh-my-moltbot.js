@@ -5,6 +5,9 @@
  */
 
 import { loadConfig, createOrchestrator, selectModelForTask, defaultConfig } from '../src/index.ts';
+import { gateway, status as gatewayStatus } from '../src/gateway/ollama-gateway.ts';
+import { sessionManager } from '../src/ultrawork/session-manager.ts';
+import { planner } from '../src/ultrawork/planner.ts';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
@@ -21,6 +24,13 @@ Commands:
   agents            List configured agents
   categories        List configured categories
   config            Show current configuration
+  
+  gateway           Show gateway status (rate limits)
+  route <message>   Route prompt through Ollama gateway
+  
+  spawn <message>   Spawn a background session
+  status            Show parallel session status
+  results           Show session results
 
 Options:
   -a, --agent <name>     Specify agent hint
@@ -31,9 +41,9 @@ Options:
 
 Examples:
   oh-my-moltbot select "implement a REST API"
-  oh-my-moltbot select "review this code" -f src/index.ts
-  oh-my-moltbot select "翻译这段文字"
-  oh-my-moltbot init
+  oh-my-moltbot route "complex reasoning task"
+  oh-my-moltbot spawn "explore auth patterns" -c explore
+  oh-my-moltbot gateway
 `);
 }
 
@@ -127,6 +137,91 @@ async function main() {
       console.log(`   Reason: ${result.reason}`);
       console.log();
     }
+    process.exit(0);
+  }
+
+  if (command === 'gateway') {
+    const status = gatewayStatus();
+    console.log('\n🌐 Gateway Status:\n');
+    for (const [name, info] of Object.entries(status)) {
+      const avail = info.available ? '✅' : '❌';
+      const limit = info.limit === Infinity ? '∞' : info.limit;
+      console.log(`  ${avail} ${name}: ${info.used}/${limit} (resets in ${info.resetsIn}s)`);
+    }
+    console.log();
+    process.exit(0);
+  }
+
+  if (command === 'route') {
+    const { message, options } = parseArgs(args.slice(1));
+    
+    if (!message) {
+      console.error('Error: No message provided');
+      process.exit(1);
+    }
+
+    const result = await gateway.process(message);
+    
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`\n🌐 Gateway Routing:`);
+      console.log(`   Model: ${result.model}`);
+      console.log(`   Reasoning: ${result.reasoning}`);
+      console.log(`   Checked: ${result.checkedModels.join(' → ')}`);
+      console.log(`   Fallback: ${result.fallbackUsed ? 'Yes' : 'No'}`);
+      console.log();
+    }
+    process.exit(0);
+  }
+
+  if (command === 'spawn') {
+    const { message, options } = parseArgs(args.slice(1));
+    
+    if (!message) {
+      console.error('Error: No message provided');
+      process.exit(1);
+    }
+
+    const sessionId = await sessionManager.spawn(message, {
+      category: options.category,
+      background: true,
+    });
+    
+    console.log(`\n🚀 Session spawned: ${sessionId}`);
+    console.log(`   Category: ${options.category || 'default'}`);
+    console.log(`   Use 'oh-my-moltbot status' to check progress`);
+    console.log();
+    process.exit(0);
+  }
+
+  if (command === 'status') {
+    const status = sessionManager.getStatus();
+    console.log('\n📊 Session Status:\n');
+    console.log(`   Total: ${status.total}`);
+    console.log(`   Pending: ${status.pending}`);
+    console.log(`   Running: ${status.running}`);
+    console.log(`   Completed: ${status.completed}`);
+    console.log(`   Failed: ${status.failed}`);
+    console.log(`   Waiting: ${status.waiting}`);
+    console.log();
+    process.exit(0);
+  }
+
+  if (command === 'results') {
+    const sessions = sessionManager.getAll();
+    console.log('\n📋 Session Results:\n');
+    for (const session of sessions) {
+      const icon = session.status === 'completed' ? '✅' : session.status === 'failed' ? '❌' : '⏳';
+      console.log(`${icon} ${session.id} (${session.model})`);
+      if (session.result) {
+        console.log(`   ${session.result.slice(0, 200)}...`);
+      }
+      if (session.error) {
+        console.log(`   Error: ${session.error}`);
+      }
+    }
+    console.log();
     process.exit(0);
   }
 
