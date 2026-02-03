@@ -9,8 +9,9 @@
  * - Interesting Q&A
  */
 
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { lockSync, unlockSync } from 'proper-lockfile';
 
 export interface Seed {
   title: string;
@@ -179,7 +180,17 @@ ${seed.conversationSnippet ? `### Conversation Snippet\n\`\`\`\n${seed.conversat
 ---
 `;
 
-    appendFileSync(filePath, seedMarkdown);
+    if (!existsSync(filePath)) {
+      writeFileSync(filePath, '');
+    }
+    
+    let release: (() => void) | undefined;
+    try {
+      release = lockSync(filePath, { retries: { retries: 5, minTimeout: 100 } });
+      appendFileSync(filePath, seedMarkdown);
+    } finally {
+      if (release) unlockSync(filePath);
+    }
     return filePath;
   }
 

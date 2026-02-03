@@ -1,12 +1,27 @@
 # oh-my-moltbot
 
-Multi-Model Orchestration Plugin for Moltbot
+**Autonomous Companion with Optimal Token Usage**
 
-**Features:**
-- 🌐 **Ollama Gateway** - Route prompts through cascading fallback (Opus → Sonnet → GPT-5 → Kimi → Ollama)
-- 🎭 **Proxy Mode** - Model acts as your thought partner, explores concepts WITH you
-- 🚀 **Ultrawork Mode** - Parallel session execution with dependency management
-- 🌱 **Seed Harvesting** - Auto-extract blog-worthy content from conversations
+> *The best AI assistant is one you forget is AI - it just handles things.*
+
+See [MANIFESTO.md](docs/MANIFESTO.md) for the full vision.
+
+## What This Is
+
+A **cost-aware, autonomous AI agent** that:
+- Routes every request to the **cheapest capable model**
+- Runs **background routines** without babysitting
+- **Caches semantically** to avoid redundant API calls
+- Executes **safely in a sandbox** with audit trails
+
+## Features
+
+- 🧠 **Local-First Routing** - Ollama classifies before paid API calls (~90% free)
+- 🎭 **Proxy Mode** - Model as thought partner for complex planning
+- 🚀 **Ultrawork Mode** - Parallel execution with dependency waves
+- 🌱 **Seed Harvesting** - Auto-extract blog content from conversations
+- 📦 **Skill Integration** - Pre-baked instructions save ~2000 tokens/call
+- 🔒 **Sandbox Execution** - Docker isolation with allowlist security
 
 ## Installation
 
