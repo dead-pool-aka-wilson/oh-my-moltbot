@@ -18,6 +18,8 @@ import type {
   PluginHookAgentContext,
   PluginHookMessageReceivedEvent,
   PluginHookMessageContext,
+  PluginHookBeforeModelSelectEvent,
+  PluginHookBeforeModelSelectResult,
 } from './types';
 
 import { gateway, type RoutingDecision } from '../gateway/ollama-gateway';
@@ -244,6 +246,57 @@ Then send your prompt.`
 
       if (Object.keys(result).length > 0) {
         return result;
+      }
+    });
+
+    // ==========================================================================
+    // before_model_select: Override model selection based on prompt analysis
+    // ==========================================================================
+
+    api.on('before_model_select', async (
+      event: PluginHookBeforeModelSelectEvent,
+      ctx: PluginHookAgentContext
+    ): Promise<PluginHookBeforeModelSelectResult | void> => {
+      if (!gatewayRoutingEnabled || !event.prompt) {
+        return;
+      }
+
+      try {
+        const routing = await gateway.analyze(event.prompt);
+        lastRoutingDecision = routing;
+
+        if (routing.category === 'local') {
+          api.logger.info(`[oh-my-moltbot] Route: local (keeping current model)`);
+          return;
+        }
+
+        const targetModelKey = CATEGORY_TO_MODEL[routing.category];
+        if (!targetModelKey) {
+          api.logger.warn(`[oh-my-moltbot] Unknown category: ${routing.category}`);
+          return;
+        }
+
+        const [targetProvider, targetModel] = targetModelKey.split('/');
+        if (!targetProvider || !targetModel) {
+          api.logger.warn(`[oh-my-moltbot] Invalid model key format: ${targetModelKey}`);
+          return;
+        }
+
+        if (!event.allowedModelKeys.has(targetModelKey)) {
+          api.logger.info(`[oh-my-moltbot] Target ${targetModelKey} not in allowlist, keeping current`);
+          return;
+        }
+
+        if (event.provider === targetProvider && event.model === targetModel) {
+          api.logger.info(`[oh-my-moltbot] Already using ${targetModelKey}`);
+          return;
+        }
+
+        api.logger.info(`[oh-my-moltbot] Routing ${routing.category} -> ${targetModelKey}`);
+        return { provider: targetProvider, model: targetModel };
+      } catch (error: any) {
+        api.logger.warn(`[oh-my-moltbot] Gateway analysis failed: ${error.message}`);
+        return;
       }
     });
 
