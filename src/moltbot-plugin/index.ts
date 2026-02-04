@@ -24,6 +24,7 @@ import { gateway } from '../gateway/ollama-gateway';
 import { proxy } from '../proxy';
 import { getUltraworkPrompt } from '../ultrawork/prompts';
 import { harvester } from '../hooks/seed-harvester';
+import { runCouncil, formatDebateResult, parseCouncilCommand, getCouncilStatus } from '../council';
 
 // Plugin state
 let ultraworkEnabled = false;
@@ -114,13 +115,78 @@ export const plugin: OpenClawPluginDefinition = {
           proxySessionId = null;  // Clear session
           
           return {
-            text: `🚀 **Dispatched ${result.sessionIds.length} tasks**\n\n${result.plan.waves.map(w => 
-              `Wave ${w.wave}: ${w.tasks.map(t => t.title).join(', ')}`
+            text: `🚀 **Dispatched ${result.sessionIds.length} tasks**\n\n${result.plan.waves.map((w: any) => 
+              `Wave ${w.wave}: ${w.tasks.map((t: any) => t.title).join(', ')}`
             ).join('\n')}`,
           };
         } catch (error: any) {
           return { text: `❌ Dispatch failed: ${error.message}` };
         }
+      },
+    });
+
+    // /council - Run agent council debate
+    api.registerCommand({
+      name: 'council',
+      description: 'Ask the agent council for taste-based decisions',
+      acceptsArgs: true,
+      handler: async (ctx) => {
+        if (!ctx.args) {
+          return { 
+            text: `🏛️ **Agent Council**
+
+Usage: /council <your question>
+       /council -c <council> <question>
+
+Councils:
+  • lifestyle - Food, fashion, places, purchases
+  • creative  - Design, writing, branding, aesthetics  
+  • direction - Career, relationships, values, life
+
+Options:
+  -c, --council <name>  Specify council explicitly
+  -v, --verbose         Include detailed reasoning
+
+Examples:
+  /council Should I try the new ramen place?
+  /council -c creative Which color palette for my portfolio?
+  /council -c direction Should I accept this job offer?`
+          };
+        }
+
+        try {
+          const request = parseCouncilCommand(ctx.args);
+          if (!request) {
+            return { text: '❌ Invalid council command. Use /council for help.' };
+          }
+
+          const result = await runCouncil(request);
+          return { text: formatDebateResult(result) };
+        } catch (error: any) {
+          return { text: `❌ Council debate failed: ${error.message}` };
+        }
+      },
+    });
+
+    // /council-status - Show council system status
+    api.registerCommand({
+      name: 'council-status',
+      description: 'Show agent council system status',
+      handler: () => {
+        const status = getCouncilStatus();
+        
+        if (status.councils.length === 0) {
+          return { text: '🏛️ **Council Status**\n\nNo councils initialized yet. Run /council to start.' };
+        }
+
+        const lines = ['🏛️ **Council Status**\n'];
+        for (const council of status.councils) {
+          lines.push(`**${council.name}** (${council.domain})`);
+          lines.push(`  Agents: ${council.activeAgents}/${council.agentCount} active`);
+        }
+        lines.push(`\nTotal debates: ${status.totalDebates}`);
+        
+        return { text: lines.join('\n') };
       },
     });
 
