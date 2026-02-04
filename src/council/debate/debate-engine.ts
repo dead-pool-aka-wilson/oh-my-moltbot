@@ -8,6 +8,8 @@ import type {
   Memory,
 } from '../types';
 import { debateSessionDb, debateTurnDb } from '../storage/council-db';
+import { MemoryManager as MemoryManagerClass } from '../memory/memory-manager';
+import { vectorStore } from '../storage/vector-store';
 
 export interface PositionPrompt {
   agent: Agent;
@@ -214,4 +216,4 @@ KEY TENSIONS: ${tensionPoints.join('; ') || 'No major disagreements.'}`;
   }
 }
 
-export const debateEngine = new DebateEngine(null as any);
+export const debateEngine = new DebateEngine(new MemoryManagerClass(vectorStore));
